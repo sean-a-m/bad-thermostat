@@ -30,11 +30,15 @@ BLEUUID notifyCharUUID("cba20003-224d-11e6-9fb8-0002a5d5c51b");
 static BLERemoteCharacteristic* pRemoteCharacteristic;
 static BLERemoteCharacteristic* pNoteRemoteCharacteristic;
 static BLEAdvertisedDevice* myDevice;
+
+// Global BLE client
+static BLEClient* pClient = nullptr;
+static BLEClientCallbacks* pClientCallback = nullptr;
+
 static boolean doConnect = false;
 static boolean doScan = false;
 
-// Global BLE client
-BLEClient* pClient = nullptr;
+
 bool connected = false;
 
 OneButton button1(PIN_BUTTON_1, true);
@@ -65,8 +69,14 @@ class MyClientCallback : public BLEClientCallbacks {
 };
 
 bool connectToServer() {
-    pClient = BLEDevice::createClient();
-    pClient->setClientCallbacks(new MyClientCallback());
+    if (pClient == nullptr) {
+        pClient = BLEDevice::createClient();
+    }
+    
+    if (pClientCallback == nullptr) {
+        pClientCallback = new MyClientCallback();
+        pClient->setClientCallbacks(pClientCallback);
+    }
 
     pClient->connect(myDevice);
     Serial.println("Connected to server");
@@ -119,6 +129,9 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
         if (advertisedDevice.getAddress().equals(target)) {
             BLEDevice::getScan()->stop();
             Serial.println("found device");
+            if (myDevice != nullptr) {
+                delete myDevice;
+            }
             myDevice = new BLEAdvertisedDevice(advertisedDevice);
             doConnect = true;
             doScan = true;
