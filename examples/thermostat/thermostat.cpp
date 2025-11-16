@@ -36,8 +36,7 @@ static BLEClient* pClient = nullptr;
 static BLEClientCallbacks* pClientCallback = nullptr;
 
 static boolean doConnect = false;
-static boolean doScan = false;
-
+static boolean doReconnect = false;
 
 bool connected = false;
 
@@ -65,6 +64,7 @@ class MyClientCallback : public BLEClientCallbacks {
   void onDisconnect(BLEClient* pclient) {
     Serial.println("Disconnected from SwitchBot");
     connected = false;
+    doReconnect = true;
   }
 };
 
@@ -134,7 +134,7 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
             }
             myDevice = new BLEAdvertisedDevice(advertisedDevice);
             doConnect = true;
-            doScan = true;
+            doReconnect = false;
         } else {
          //   Serial.println("Other Advertised device is");
         }
@@ -151,10 +151,8 @@ bool pressButtonTwo() {
         Serial.println("Sending message");
         uint8_t cmd[] = {0x57, 0x1, 0x0};
         pRemoteCharacteristic->writeValue(cmd, 3);
-        // delay(10);
     } else {
         Serial.println("Can't send message");
-      //   delay(1000);
     }
     return true;
 }
@@ -217,7 +215,7 @@ void loop()
 */ 
     if (connected) {
         button1.tick();
-    } else if (doScan) {
+    } else if (doReconnect) {
         BLEDevice::getScan()->start(0);
         delay(1000);
     }
