@@ -44,12 +44,11 @@ void notifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic,
                     uint8_t* pData, 
                     size_t length, 
                     bool isNotify) {
-                        /*
   Serial.print("Received data: ");
   for (int i = 0; i < length; i++) {
     Serial.printf("0x%02X ", pData[i]);
   }
-  Serial.println();*/
+  Serial.println();
 }
 
 // Connection callback
@@ -139,11 +138,12 @@ bool pressButtonTwo() {
         Serial.println("Sending message");
         uint8_t cmd[] = {0x57, 0x1, 0x0};
         pRemoteCharacteristic->writeValue(cmd, 3);
-        delay(1000);
+        // delay(10);
     } else {
         Serial.println("Can't send message");
-        delay(1000);
+      //   delay(1000);
     }
+    return true;
 }
 
 void setup()
