@@ -3,9 +3,9 @@
 #include "pin_config.h"
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#include <BLEDevice.h>
-#include <BLEClient.h>
 #include "OneButton.h"
+#include "BluetoothManager.h"
+#include "thermo_mgr.h"
 
 #define ONE_WIRE_BUS 21
 
@@ -16,209 +16,72 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 
 TFT_eSPI tft = TFT_eSPI();
-
-
-// SwitchBot MAC address (convert colons to your ESP32 format)
-BLEAddress switchbotAddress("C5:38:32:30:16:1D");
-static std::string SWITCHBOT_MAC_ADDRESS = "C5:38:32:30:16:1D";
-
-
-BLEUUID serviceUUID("cba20d00-224d-11e6-9fb8-0002a5d5c51b");
-BLEUUID rxCharUUID("cba20002-224d-11e6-9fb8-0002a5d5c51b");
-BLEUUID notifyCharUUID("cba20003-224d-11e6-9fb8-0002a5d5c51b");
-
-static BLERemoteCharacteristic* pRemoteCharacteristic;
-static BLERemoteCharacteristic* pNoteRemoteCharacteristic;
-static BLEAdvertisedDevice* myDevice;
-
-// Global BLE client
-static BLEClient* pClient = nullptr;
-static BLEClientCallbacks* pClientCallback = nullptr;
-
-static boolean doConnect = false;
-static boolean doReconnect = false;
-
-bool connected = false;
-
+BluetoothManager bluetoothManager;
 OneButton button1(PIN_BUTTON_1, true);
+thermo_mgr thermos; 
 
-// Notification callback function
-void notifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic,
-                    uint8_t* pData, 
-                    size_t length, 
-                    bool isNotify) {
-  Serial.print("Received data: ");
-  for (int i = 0; i < length; i++) {
-    Serial.printf("0x%02X ", pData[i]);
-  }
-  Serial.println();
-}
+float desired_temp_f = 70.5;
+float hysteresis = 0.7;
 
-// Connection callback
-class MyClientCallback : public BLEClientCallbacks {
-  void onConnect(BLEClient* pclient) {
-    Serial.println("Connected to SwitchBot");
-    connected = true;
-  }
-
-  void onDisconnect(BLEClient* pclient) {
-    Serial.println("Disconnected from SwitchBot");
-    connected = false;
-    doReconnect = true;
-  }
-};
-
-bool connectToServer() {
-    if (pClient == nullptr) {
-        pClient = BLEDevice::createClient();
-    }
+static uint32_t last_tick;
     
-    if (pClientCallback == nullptr) {
-        pClientCallback = new MyClientCallback();
-        pClient->setClientCallbacks(pClientCallback);
-    }
 
-    pClient->connect(myDevice);
-    Serial.println("Connected to server");
-    pClient->setMTU(517);
-
-    BLERemoteService* pRemoteService = pClient->getService(serviceUUID);
-    if (pRemoteService == nullptr) {
-        Serial.println("Failed to find service");
-        return false;
-    }
-    Serial.println("Found service");
-
-    pRemoteCharacteristic = pRemoteService->getCharacteristic(rxCharUUID);
-    if (pRemoteCharacteristic == nullptr) {
-        Serial.println("Failed to find characteristic UUID");
-        pClient->disconnect();
-        return false;
-    }
-    Serial.println("Found characteristic");
-    
-    if (pRemoteCharacteristic->canRead()) {
-        std::string value = pRemoteCharacteristic->readValue();
-        Serial.println("Characteristic value is: ");
-        Serial.println(value.c_str());
-    }
-
-    if(pRemoteCharacteristic->canNotify()) {
-        pRemoteCharacteristic->registerForNotify(notifyCallback);
-    }
-
-    pNoteRemoteCharacteristic = pRemoteService->getCharacteristic(notifyCharUUID);
-    if (pNoteRemoteCharacteristic == nullptr) {
-        Serial.println("Failed to find notification characteristic UUID");
-        pClient->disconnect();
-        return false;
-    }
-    Serial.println("Found notification characteristic");
-
-    if (pNoteRemoteCharacteristic->canNotify()) {
-        pNoteRemoteCharacteristic->registerForNotify(notifyCallback);
-    }
-    connected = true;
-    return true;
-}
-
-class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
-    void onResult(BLEAdvertisedDevice advertisedDevice) {
-     //   Serial.println("advertised device found");
-        BLEAddress target = BLEAddress(SWITCHBOT_MAC_ADDRESS);
-        if (advertisedDevice.getAddress().equals(target)) {
-            BLEDevice::getScan()->stop();
-            Serial.println("found device");
-            if (myDevice != nullptr) {
-                delete myDevice;
-            }
-            myDevice = new BLEAdvertisedDevice(advertisedDevice);
-            doConnect = true;
-            doReconnect = false;
-        } else {
-         //   Serial.println("Other Advertised device is");
-        }
-    }
-};
-
-bool pressButtonTwo() {
-    if (connected) {
-        if (pRemoteCharacteristic == nullptr) {
-            Serial.println("Not initialized, returning");
-            return false;
-        }
-
-        Serial.println("Sending message");
-        uint8_t cmd[] = {0x57, 0x1, 0x0};
-        pRemoteCharacteristic->writeValue(cmd, 3);
-    } else {
-        Serial.println("Can't send message");
-    }
-    return true;
-}
 
 void setup()
 {
     Serial.begin(115200);
     sensors.begin();
-    
+
     pinMode(PIN_POWER_ON, OUTPUT);
     digitalWrite(PIN_POWER_ON, HIGH);
 
     button1.attachClick([]() {
-        pressButtonTwo();
+        bluetoothManager.sendMessage();
     });
 
     tft.init();
     tft.setRotation(1);
     tft.fillScreen(TFT_BLACK);
-    
+
     tft.setTextColor(TFT_WHITE);
     tft.setCursor(10, 10);
     tft.print("test");
 
-    BLEDevice::init("");
-    BLEScan* pBLEScan = BLEDevice::getScan();
-    pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-    pBLEScan->setInterval(1349);
-    pBLEScan->setWindow(449);
-    pBLEScan->setActiveScan(true);
-    pBLEScan->start(5, false);
-    
+    bluetoothManager.initialize();
+    last_tick = millis();
+    thermos.set_target_temperature(72.0);
+    thermos.set_hysteresis(0.8);
+
     Serial.println("Thermostat project initialized");
 }
 
 void loop()
 {
-    if (doConnect == true) {
-        if (connectToServer()) {
-            Serial.println("Now connected to server");
-        } else {
-            Serial.println("Failed to connect to server!");
-        }
-        doConnect = false;
-    }
-   // sensors.requestTemperatures();
-        // Get temperature in Celsius
- //   float temperatureC = sensors.getTempCByIndex(0);
-    
-    // Get temperature in Fahrenheit
- //   float temperatureF = sensors.getTempFByIndex(0);
-    
-    /*
-    // Print results
-    Serial.print("Temperature: ");
-    Serial.print(temperatureC);
-    Serial.print("°C / ");
-    Serial.print(temperatureF);
-    Serial.println("°F");
-*/ 
-    if (connected) {
+    bluetoothManager.maintainConnection();
+
+    // sensors.requestTemperatures();
+    // float temperatureC = sensors.getTempCByIndex(0);
+    // float temperatureF = sensors.getTempFByIndex(0);
+
+    if (bluetoothManager.isConnected()) {
         button1.tick();
-    } else if (doReconnect) {
-        BLEDevice::getScan()->start(0);
-        delay(1000);
     }
 
-  //  delay(1000);
+    if(millis() - last_tick > 60000) {
+        Serial.print("\nConnection status: ");
+        Serial.println(bluetoothManager.isConnected());
+        sensors.requestTemperatures();
+        float tempF = sensors.getTempFByIndex(0);
+        thermos.add_measurement(tempF, millis());
+        Serial.println(tempF);
+        if (thermos.is_under(tempF)) {
+            Serial.println("Thermostat is under");
+        } else {
+            Serial.println("Thermostat is in bounds");
+        }
+
+        last_tick = millis();
+    }
+
+    // delay(1000);
 }
