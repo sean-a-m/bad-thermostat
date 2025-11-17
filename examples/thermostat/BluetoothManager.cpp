@@ -11,6 +11,8 @@ constexpr char NOTIFY_CHAR_UUID[] = "cba20003-224d-11e6-9fb8-0002a5d5c51b";
 constexpr uint32_t SCAN_INTERVAL = 1349;
 constexpr uint32_t SCAN_WINDOW = 449;
 constexpr uint32_t SCAN_DURATION_SECONDS = 5;
+constexpr uint32_t CONNECT_TIMEOUT_MS = 10000;
+constexpr uint32_t CONNECT_RETRY_DELAY_MS = 250;
 }  // namespace
 
 BluetoothManager::BluetoothManager()
@@ -50,7 +52,7 @@ void BluetoothManager::maintainConnection() {
     }
 
     if (!connected_ && doReconnect_) {
-        startScan(0);
+        startScan(30);
         delay(1000);
     }
 }
@@ -128,7 +130,31 @@ bool BluetoothManager::connectToServer() {
         pClient_->setClientCallbacks(clientCallback_);
     }
 
-    pClient_->connect(myDevice_);
+    const uint32_t connect_start = millis();
+    bool is_connected = false;
+    while (millis() - connect_start < CONNECT_TIMEOUT_MS) {
+        if (pClient_->isConnected()) {
+            is_connected = true;
+            break;
+        }
+
+        Serial.println("Attempting BLE connection...");
+        if (pClient_->connect(myDevice_)) {
+            is_connected = true;
+            break;
+        }
+
+        delay(CONNECT_RETRY_DELAY_MS);
+        yield();
+    }
+
+    if (!is_connected) {
+        Serial.println("BLE connection attempt timed out; will retry later");
+        pClient_->disconnect();
+        doReconnect_ = true;
+        return false;
+    }
+
     Serial.println("Connected to server");
     pClient_->setMTU(517);
 

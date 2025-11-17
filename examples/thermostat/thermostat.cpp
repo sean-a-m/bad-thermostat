@@ -128,7 +128,7 @@ void queue_message_if_needed(float temperature) {
 void loop()
 {
 
-    if (millis() - last_ble_tick > 5000) {
+    if (millis() - last_ble_tick > 60000 || message_send_queued) {
         Serial.print("\nConnection status: ");
         Serial.println(bluetoothManager.isConnected());
         bluetoothManager.maintainConnection();
