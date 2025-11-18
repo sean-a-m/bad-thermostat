@@ -6,9 +6,19 @@
 #include "OneButton.h"
 #include "BluetoothManager.h"
 #include "thermo_mgr.h"
+#include <esp_sleep.h>
+#include <esp_task_wdt.h>
 
 
 #define ONE_WIRE_BUS 21
+#define WDT_TIMEOUT 10  // Watchdog timeout in seconds
+
+// constexpr uint64_t    uS_TO_S_FACTOR = 1000000ULL;
+// constexpr uint64_t    WAKE_INTERVAL_S = 10; // seconds
+
+// RTC memory variable to persist machine_on across watchdog resets
+RTC_DATA_ATTR boolean rtc_machine_on = false;
+
 
 // Display is 170 * 320
 
@@ -44,6 +54,16 @@ static boolean should_redraw_display = false;
 void setup()
 {
     Serial.begin(115200);
+    
+    // Initialize watchdog timer
+    esp_task_wdt_init(WDT_TIMEOUT, true);  // 10 second timeout, panic on timeout
+    esp_task_wdt_add(NULL);  // Add current thread to WDT watch
+    
+    // Restore machine_on from RTC memory (persists across watchdog resets)
+    machine_on = rtc_machine_on;
+    Serial.print("Restored machine_on from RTC memory: ");
+    Serial.println(machine_on);
+    
     sensors.begin();
     sensors.setWaitForConversion(false);
 
@@ -61,6 +81,11 @@ void setup()
         thermos.set_target_temperature(current_target_temperature + 0.5);
         should_redraw_display = true;
     });
+
+//    esp_sleep_enable_ext1_wakeup(1ULL << PIN_BUTTON_1, ESP_EXT1_WAKEUP_ALL_LOW);
+//    esp_sleep_enable_ext1_wakeup(1ULL << PIN_BUTTON_2, ESP_EXT1_WAKEUP_ALL_LOW);
+//    esp_sleep_enable_timer_wakeup(WAKE_INTERVAL_S * uS_TO_S_FACTOR);
+
 
     tft.init();
     tft.setRotation(1);
@@ -113,12 +138,14 @@ void queue_message_if_needed(float temperature) {
     }
     if (machine_on && thermos.is_over(temperature)) {
         machine_on = false;
+        rtc_machine_on = false;  // Save to RTC memory
         message_send_queued = true;
 
     }
 
     if (!machine_on && thermos.is_under(temperature)) {
         machine_on = true;
+        rtc_machine_on = true;  // Save to RTC memory
         message_send_queued = true;
     }
 
@@ -127,6 +154,8 @@ void queue_message_if_needed(float temperature) {
 
 void loop()
 {
+    // Feed the watchdog timer to prevent reset
+    esp_task_wdt_reset();
 
     if (millis() - last_ble_tick > 60000 || message_send_queued) {
         Serial.print("\nConnection status: ");
@@ -176,6 +205,9 @@ void loop()
         drawDisplay();
         should_redraw_display = false;
     }
+
+    // TODO: need to disable bluetooth explicitly?
+    // esp_deep_sleep_start();
 
 
 
