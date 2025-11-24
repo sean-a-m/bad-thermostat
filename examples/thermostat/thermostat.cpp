@@ -18,6 +18,7 @@
 
 // RTC memory variable to persist machine_on across watchdog resets
 RTC_DATA_ATTR boolean rtc_machine_on = false;
+RTC_DATA_ATTR float rtc_target_temp_f = 70.5;
 
 
 // Display is 170 * 320
@@ -73,12 +74,14 @@ void setup()
     button1.attachClick([]() {
         float current_target_temperature = thermos.get_target_temperature();
         thermos.set_target_temperature(current_target_temperature - 0.5);
+        rtc_target_temp_f = thermos.get_target_temperature();
         should_redraw_display = true;
     });
 
     button2.attachClick([]() {
         float current_target_temperature = thermos.get_target_temperature();
         thermos.set_target_temperature(current_target_temperature + 0.5);
+        rtc_target_temp_f = thermos.get_target_temperature();
         should_redraw_display = true;
     });
 
@@ -86,6 +89,8 @@ void setup()
 //    esp_sleep_enable_ext1_wakeup(1ULL << PIN_BUTTON_2, ESP_EXT1_WAKEUP_ALL_LOW);
 //    esp_sleep_enable_timer_wakeup(WAKE_INTERVAL_S * uS_TO_S_FACTOR);
 
+    ledcAttachPin(PIN_LCD_BL, 0);
+    ledcWrite(0, 10); /* Screen brightness can be modified by adjusting this parameter. (0-255) */
 
     tft.init();
     tft.setRotation(1);
@@ -100,8 +105,8 @@ void setup()
     last_temperature_read_tick = millis();
     last_temperature_request_tick = millis();
     last_ble_tick = millis();
-    thermos.set_target_temperature(72.0);
-    thermos.set_hysteresis(0.8);
+    thermos.set_target_temperature(rtc_target_temp_f);
+    thermos.set_hysteresis(hysteresis);
 
     Serial.println("Thermostat project initialized");
 }
