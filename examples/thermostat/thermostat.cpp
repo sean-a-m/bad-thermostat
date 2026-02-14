@@ -8,6 +8,7 @@
 #include "thermo_mgr.h"
 #include <esp_sleep.h>
 #include <esp_task_wdt.h>
+#include <Preferences.h>
 
 // Define which sensor to use - comment/uncomment to switch
 // #define USE_ONEWIRE_SENSOR
@@ -32,9 +33,18 @@
 // constexpr uint64_t    uS_TO_S_FACTOR = 1000000ULL;
 // constexpr uint64_t    WAKE_INTERVAL_S = 10; // seconds
 
-// RTC memory variable to persist machine_on across watchdog resets
-RTC_DATA_ATTR boolean rtc_machine_on = false;
-RTC_DATA_ATTR float rtc_target_temp_f = 70.5;
+static const uint32_t NVS_MAGIC = 0xBAD0CAFE;
+Preferences prefs;
+boolean machine_on = false;
+float target_temp_f = 70.5;
+
+void nvs_save_machine_on() {
+    prefs.putBool("machine_on", machine_on);
+}
+
+void nvs_save_target_temp() {
+    prefs.putFloat("target_temp", target_temp_f);
+}
 
 
 // Display is 170 * 320
@@ -113,12 +123,23 @@ void setup()
     // Initialize watchdog timer
     esp_task_wdt_init(WDT_TIMEOUT, true);  // 10 second timeout, panic on timeout
     esp_task_wdt_add(NULL);  // Add current thread to WDT watch
-    
-    // Restore machine_on from RTC memory (persists across watchdog resets)
-    // machine_on = rtc_machine_on;
-    Serial.print("Restored machine_on from RTC memory: ");
-    Serial.println(rtc_machine_on);
-    thermos.set_target_temperature(rtc_target_temp_f);
+
+    // Restore persisted state from NVS
+    prefs.begin("thermostat", false);
+    if (prefs.getUInt("magic", 0) != NVS_MAGIC) {
+        Serial.println("First boot: initializing NVS with defaults");
+        prefs.putUInt("magic", NVS_MAGIC);
+        prefs.putBool("machine_on", machine_on);
+        prefs.putFloat("target_temp", target_temp_f);
+    } else {
+        machine_on = prefs.getBool("machine_on", false);
+        target_temp_f = prefs.getFloat("target_temp", 70.5);
+        Serial.print("Restored from NVS: machine_on=");
+        Serial.print(machine_on);
+        Serial.print(" target_temp=");
+        Serial.println(target_temp_f);
+    }
+    thermos.set_target_temperature(target_temp_f);
     
     // Initialize temperature sensor
 #ifdef USE_ONEWIRE_SENSOR
@@ -154,14 +175,16 @@ void setup()
     button1.attachClick([]() {
         float current_target_temperature = thermos.get_target_temperature();
         thermos.set_target_temperature(current_target_temperature - 0.5);
-        rtc_target_temp_f = thermos.get_target_temperature();
+        target_temp_f = thermos.get_target_temperature();
+        nvs_save_target_temp();
         should_redraw_display = true;
     });
 
     button2.attachClick([]() {
         float current_target_temperature = thermos.get_target_temperature();
         thermos.set_target_temperature(current_target_temperature + 0.5);
-        rtc_target_temp_f = thermos.get_target_temperature();
+        target_temp_f = thermos.get_target_temperature();
+        nvs_save_target_temp();
         should_redraw_display = true;
     });
 
@@ -185,7 +208,7 @@ void setup()
     last_temperature_read_tick = millis();
     last_temperature_request_tick = millis();
     last_ble_tick = millis();
-    thermos.set_target_temperature(rtc_target_temp_f);
+    thermos.set_target_temperature(target_temp_f);
     thermos.set_hysteresis(hysteresis);
 
     Serial.println("Thermostat project initialized");
@@ -221,17 +244,17 @@ void queue_message_if_needed(float temperature) {
     if (message_send_queued == true) {
         return;
     }
-    if (rtc_machine_on && thermos.is_over(temperature)) {
-        rtc_machine_on = false;
-        message_send_queued = true;
-
-    }
-
-    if (!rtc_machine_on && thermos.is_under(temperature)) {
-        rtc_machine_on = true;
+    if (machine_on && thermos.is_over(temperature)) {
+        machine_on = false;
+        nvs_save_machine_on();
         message_send_queued = true;
     }
 
+    if (!machine_on && thermos.is_under(temperature)) {
+        machine_on = true;
+        nvs_save_machine_on();
+        message_send_queued = true;
+    }
 }
 
 boolean isTemperatureReadReady() {
