@@ -59,7 +59,7 @@ OneButton button1(PIN_BUTTON_1, true);
 OneButton button2(PIN_BUTTON_2, true);
 thermo_mgr thermos; 
 
-float desired_temp_f = 70.5;
+// float desired_temp_f = 70.5;
 float hysteresis = 1.25;
 float last_read_temp_f = 0.0;
 
@@ -70,7 +70,7 @@ static uint32_t last_ble_tick;
 
 static boolean message_send_queued = false;
 static boolean heat_mode = true;
-static boolean machine_on = false;
+// static boolean machine_on = false;
 
 static boolean should_redraw_display = false;
     
@@ -115,9 +115,10 @@ void setup()
     esp_task_wdt_add(NULL);  // Add current thread to WDT watch
     
     // Restore machine_on from RTC memory (persists across watchdog resets)
-    machine_on = rtc_machine_on;
+    // machine_on = rtc_machine_on;
     Serial.print("Restored machine_on from RTC memory: ");
-    Serial.println(machine_on);
+    Serial.println(rtc_machine_on);
+    thermos.set_target_temperature(rtc_target_temp_f);
     
     // Initialize temperature sensor
 #ifdef USE_ONEWIRE_SENSOR
@@ -220,16 +221,14 @@ void queue_message_if_needed(float temperature) {
     if (message_send_queued == true) {
         return;
     }
-    if (machine_on && thermos.is_over(temperature)) {
-        machine_on = false;
-        rtc_machine_on = false;  // Save to RTC memory
+    if (rtc_machine_on && thermos.is_over(temperature)) {
+        rtc_machine_on = false;
         message_send_queued = true;
 
     }
 
-    if (!machine_on && thermos.is_under(temperature)) {
-        machine_on = true;
-        rtc_machine_on = true;  // Save to RTC memory
+    if (!rtc_machine_on && thermos.is_under(temperature)) {
+        rtc_machine_on = true;
         message_send_queued = true;
     }
 
