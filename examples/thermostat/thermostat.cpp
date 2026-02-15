@@ -246,13 +246,11 @@ void queue_message_if_needed(float temperature) {
     }
     if (machine_on && thermos.is_over(temperature)) {
         machine_on = false;
-        nvs_save_machine_on();
         message_send_queued = true;
     }
 
     if (!machine_on && thermos.is_under(temperature)) {
         machine_on = true;
-        nvs_save_machine_on();
         message_send_queued = true;
     }
 }
@@ -299,6 +297,7 @@ void loop()
     if (message_send_queued && bluetoothManager.isConnected()) {
         if(bluetoothManager.sendMessage()) {
             message_send_queued = false;
+            nvs_save_machine_on();
         }
     }
 

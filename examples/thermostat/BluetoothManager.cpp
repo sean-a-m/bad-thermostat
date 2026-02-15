@@ -3,8 +3,8 @@
 #include <Arduino.h>
 
 namespace {
-// constexpr char SWITCHBOT_MAC_ADDRESS[] = "C5:38:32:30:16:1D";
-constexpr char SWITCHBOT_MAC_ADDRESS[] = "C6:38:32:30:28:81";
+constexpr char SWITCHBOT_MAC_ADDRESS[] = "C5:38:32:30:16:1D";
+// constexpr char SWITCHBOT_MAC_ADDRESS[] = "C6:38:32:30:28:81";
 constexpr char SERVICE_UUID[] = "cba20d00-224d-11e6-9fb8-0002a5d5c51b";
 constexpr char RX_CHAR_UUID[] = "cba20002-224d-11e6-9fb8-0002a5d5c51b";
 constexpr char NOTIFY_CHAR_UUID[] = "cba20003-224d-11e6-9fb8-0002a5d5c51b";
