@@ -70,7 +70,7 @@ OneButton button2(PIN_BUTTON_2, true);
 thermo_mgr thermos; 
 
 // float desired_temp_f = 70.5;
-float hysteresis = 1.25;
+float hysteresis = 0.75;
 float last_read_temp_f = 0.0;
 
 static uint32_t last_temperature_request_tick;
