@@ -1,7 +1,7 @@
 # define USE_LIVING_ROOM_ADDRESS
 
 #include <Arduino.h>
-#include <TFT_eSPI.h>
+#include "DisplayManager.h"
 #include "pin_config.h"
 #include "OneButton.h"
 #include "BluetoothManager.h"
@@ -72,7 +72,7 @@ Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 
 sensors_event_t humidity, temp;
 
-TFT_eSPI tft = TFT_eSPI();
+DisplayManager display;
 BluetoothManager bluetoothManager;
 OneButton button1(PIN_BUTTON_1, true);
 OneButton button2(PIN_BUTTON_2, true);
@@ -118,13 +118,6 @@ void scanForDevices() {
 
 }
 
-void writeQuickMessage(const char* message) {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_WHITE);
-    tft.setCursor(10, 10);
-    tft.print(message);
-}
-
 void setup()
 {
     Serial.begin(115200);
@@ -159,13 +152,13 @@ void setup()
 
 #ifdef USE_SHT45_SENSOR
     Serial.println("Initializing SHT45 sensor...");
-    writeQuickMessage("Initializing SHT45 sensor");
+    display.writeQuickMessage("Initializing SHT45 sensor");
     Wire.begin(43, 44);
     scanForDevices();
     //Wire.begin();
     if (!sht4.begin()) {
         Serial.println("ERROR: Couldn't find SHT45 sensor!");
-        writeQuickMessage("ERROR: Couldn't find SHT45 sensor!");
+        display.writeQuickMessage("ERROR: Couldn't find SHT45 sensor!");
 
         while (1) delay(1);
     }
@@ -204,13 +197,8 @@ void setup()
  //   ledcAttachPin(PIN_LCD_BL, 0);
  //   ledcWrite(0, 10); /* Screen brightness can be modified by adjusting this parameter. (0-255) */
 
-    tft.init();
-    tft.setRotation(1);
-    tft.fillScreen(TFT_BLACK);
-
-    tft.setTextColor(TFT_WHITE);
-    tft.setCursor(10, 10);
-    tft.print("booting...");
+    display.initialize();
+    display.writeQuickMessage("booting...");
     
 
     bluetoothManager.initialize();
@@ -221,32 +209,6 @@ void setup()
     thermos.set_hysteresis(hysteresis);
 
     Serial.println("Thermostat project initialized");
-}
-
-void print_formatted_float(float number) {
-    char buffer[16];
-    std::snprintf(buffer, sizeof(buffer), "%.1f", number);
-    std::string s(buffer);
-    tft.print(buffer);
-
-}
-
-void drawDisplay() {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_WHITE);
-    tft.setTextFont(7);
-    tft.setTextSize(1);
-    tft.setCursor(80, 80);
-
-    print_formatted_float(thermos.get_target_temperature());
-
-
-    //tft.drawNumber(temperature, 1, 80, 30);
-    tft.setTextColor(TFT_LIGHTGREY);
-    tft.setTextFont(2);
-    tft.setTextSize(3);
-    tft.setCursor(200, 20);
-    print_formatted_float(last_read_temp_f);
 }
 
 void queue_message_if_needed(float temperature) {
@@ -379,7 +341,7 @@ void loop()
     }
 
     if (should_redraw_display) {
-        drawDisplay();
+        display.drawDisplay(thermos.get_target_temperature(), last_read_temp_f);
         should_redraw_display = false;
     }
 
