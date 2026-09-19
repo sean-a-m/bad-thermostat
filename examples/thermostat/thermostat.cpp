@@ -190,10 +190,6 @@ void setup()
         should_redraw_display = true;
     });
 
-//    esp_sleep_enable_ext1_wakeup(1ULL << PIN_BUTTON_1, ESP_EXT1_WAKEUP_ALL_LOW);
-//    esp_sleep_enable_ext1_wakeup(1ULL << PIN_BUTTON_2, ESP_EXT1_WAKEUP_ALL_LOW);
-//    esp_sleep_enable_timer_wakeup(WAKE_INTERVAL_S * uS_TO_S_FACTOR);
-
  //   ledcAttachPin(PIN_LCD_BL, 0);
  //   ledcWrite(0, 10); /* Screen brightness can be modified by adjusting this parameter. (0-255) */
 
@@ -345,12 +341,6 @@ void loop()
         should_redraw_display = false;
     }
 
-    // TODO: need to disable bluetooth explicitly?
-    // esp_deep_sleep_start();
-
-
-
-    // delay(1000);
 }
 
 
