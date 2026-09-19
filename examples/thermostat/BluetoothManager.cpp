@@ -3,8 +3,8 @@
 #include <Arduino.h>
 
 namespace {
-constexpr char SWITCHBOT_MAC_ADDRESS[] = "C5:38:32:30:16:1D";
-// constexpr char SWITCHBOT_MAC_ADDRESS[] = "C6:38:32:30:28:81";
+// constexpr char SWITCHBOT_MAC_ADDRESS[] = "C5:38:32:30:16:1D";
+constexpr char SWITCHBOT_MAC_ADDRESS[] = "C6:38:32:30:28:81";
 constexpr char SERVICE_UUID[] = "cba20d00-224d-11e6-9fb8-0002a5d5c51b";
 constexpr char RX_CHAR_UUID[] = "cba20002-224d-11e6-9fb8-0002a5d5c51b";
 constexpr char NOTIFY_CHAR_UUID[] = "cba20003-224d-11e6-9fb8-0002a5d5c51b";
@@ -14,6 +14,12 @@ constexpr uint32_t SCAN_WINDOW = 449;
 constexpr uint32_t SCAN_DURATION_SECONDS = 5;
 constexpr uint32_t CONNECT_TIMEOUT_MS = 10000;
 constexpr uint32_t CONNECT_RETRY_DELAY_MS = 250;
+
+// Exponential backoff bounds for connection retries. Starts at MIN after the
+// first failure and doubles up to MAX, so a wedged BLE stack is retried at a
+// sane cadence instead of every loop iteration.
+constexpr uint32_t CONNECTION_BACKOFF_MIN_MS = 3000;
+constexpr uint32_t CONNECTION_BACKOFF_MAX_MS = 60000;
 }  // namespace
 
 BluetoothManager::BluetoothManager()
@@ -29,7 +35,34 @@ BluetoothManager::BluetoothManager()
       pBLEScan_(nullptr),
       doConnect_(false),
       doReconnect_(false),
-      connected_(false) {}
+      connected_(false),
+      lastConnectionAttemptTick_(0),
+      connectionBackoffMs_(0),
+      consecutiveConnectionFailures_(0) {}
+
+bool BluetoothManager::beginConnectionRetryIfDue() {
+    if (millis() - lastConnectionAttemptTick_ < connectionBackoffMs_) {
+        return false;
+    }
+    lastConnectionAttemptTick_ = millis();
+    return true;
+}
+
+void BluetoothManager::noteConnectionSuccess() {
+    consecutiveConnectionFailures_ = 0;
+    connectionBackoffMs_ = CONNECTION_BACKOFF_MIN_MS;
+}
+
+void BluetoothManager::noteConnectionFailure() {
+    ++consecutiveConnectionFailures_;
+    if (connectionBackoffMs_ < CONNECTION_BACKOFF_MIN_MS) {
+        connectionBackoffMs_ = CONNECTION_BACKOFF_MIN_MS;
+    } else if (connectionBackoffMs_ < CONNECTION_BACKOFF_MAX_MS / 2) {
+        connectionBackoffMs_ *= 2;
+    } else {
+        connectionBackoffMs_ = CONNECTION_BACKOFF_MAX_MS;
+    }
+}
 
 void BluetoothManager::initialize() {
     BLEDevice::init("");

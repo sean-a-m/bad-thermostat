@@ -11,6 +11,16 @@ public:
     bool sendMessage();
     bool isConnected() const { return connected_; }
 
+    // Backoff-gated retry: returns true (and stamps the attempt time) only
+    // once the current backoff interval has elapsed. Caller should treat a
+    // true return as "you may attempt BLE work this iteration".
+    bool beginConnectionRetryIfDue();
+    // Reset failure counter and backoff after a successful delivery.
+    void noteConnectionSuccess();
+    // Record a failed attempt: grows the backoff and the failure counter.
+    void noteConnectionFailure();
+    uint32_t consecutiveConnectionFailures() const { return consecutiveConnectionFailures_; }
+
 private:
     class ClientCallback : public BLEClientCallbacks {
     public:
@@ -55,4 +65,8 @@ private:
     bool doConnect_;
     bool doReconnect_;
     bool connected_;
+
+    uint32_t lastConnectionAttemptTick_;
+    uint32_t connectionBackoffMs_;
+    uint32_t consecutiveConnectionFailures_;
 };

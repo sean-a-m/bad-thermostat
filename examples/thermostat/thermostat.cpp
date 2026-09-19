@@ -30,6 +30,15 @@
 
 #define WDT_TIMEOUT 10  // Watchdog timeout in seconds
 
+// Periodically reboot to recover from the BLE stack wedging itself after
+// very long uptimes. All persisted state lives in NVS, so a reboot is safe.
+static const uint32_t REBOOT_INTERVAL_MS = 24UL * 60UL * 60UL * 1000UL;  // 24 hours
+
+// Escape hatch for a wedged BLE stack: if the connection keeps failing this
+// many times in a row (despite backoff), reboot rather than retry forever.
+// With the backoff capping at 60s this is roughly 8-10 minutes of failures.
+static const uint32_t BLE_MAX_CONSECUTIVE_FAILURES = 12;
+
 // constexpr uint64_t    uS_TO_S_FACTOR = 1000000ULL;
 // constexpr uint64_t    WAKE_INTERVAL_S = 10; // seconds
 
@@ -79,7 +88,7 @@ static uint32_t last_ble_tick;
 
 
 static boolean message_send_queued = false;
-static boolean heat_mode = true;
+static boolean heat_mode = false;
 // static boolean machine_on = false;
 
 static boolean should_redraw_display = false;
@@ -241,18 +250,34 @@ void drawDisplay() {
 }
 
 void queue_message_if_needed(float temperature) {
-    if (message_send_queued == true) {
-        return;
-    }
-    if (machine_on && thermos.is_over(temperature)) {
-        machine_on = false;
-        message_send_queued = true;
+    if (heat_mode) {
+        if (message_send_queued == true) {
+            return;
+        }
+        if (machine_on && thermos.is_over(temperature)) {
+            machine_on = false;
+            message_send_queued = true;
+        }
+
+        if (!machine_on && thermos.is_under(temperature)) {
+            machine_on = true;
+            message_send_queued = true;
+        }
+    } else {
+        if (message_send_queued == true) {
+            return;
+        }
+        if (!machine_on && thermos.is_over(temperature)) {
+            machine_on = true;
+            message_send_queued = true;
+        }
+
+        if (machine_on && thermos.is_under(temperature)) {
+            machine_on = false;
+            message_send_queued = true;
+        }
     }
 
-    if (!machine_on && thermos.is_under(temperature)) {
-        machine_on = true;
-        message_send_queued = true;
-    }
 }
 
 boolean isTemperatureReadReady() {
@@ -284,7 +309,22 @@ void loop()
     // Feed the watchdog timer to prevent reset
     esp_task_wdt_reset();
 
-    if (millis() - last_ble_tick > 60000 || message_send_queued) {
+    // Scheduled reboot to recover from the BLE stack failing after long
+    // uptimes. State is persisted in NVS so this is non-destructive.
+    if (millis() > REBOOT_INTERVAL_MS) {
+        Serial.println("24h uptime reached, rebooting...");
+        Serial.flush();
+        esp_restart();
+    }
+
+    // Periodic keepalive, plus a backoff-gated retry when a message is
+    // waiting. Gating the retry through beginConnectionRetryIfDue() stops the
+    // old behavior where a queued message hammered maintainConnection() every
+    // single loop iteration once the link couldn't be (re)established.
+    bool keepalive_due = (millis() - last_ble_tick > 60000);
+    bool retry_due = message_send_queued && bluetoothManager.beginConnectionRetryIfDue();
+
+    if (keepalive_due || retry_due) {
         Serial.print("\nConnection status: ");
         Serial.println(bluetoothManager.isConnected());
         bluetoothManager.maintainConnection();
@@ -294,11 +334,21 @@ void loop()
     button1.tick();
     button2.tick();
 
-    if (message_send_queued && bluetoothManager.isConnected()) {
-        if(bluetoothManager.sendMessage()) {
+    if (message_send_queued) {
+        if (bluetoothManager.isConnected() && bluetoothManager.sendMessage()) {
             message_send_queued = false;
+            bluetoothManager.noteConnectionSuccess();
             nvs_save_machine_on();
+        } else if (retry_due) {
+            // Backoff window elapsed and we still couldn't deliver.
+            bluetoothManager.noteConnectionFailure();
         }
+    }
+
+    if (bluetoothManager.consecutiveConnectionFailures() >= BLE_MAX_CONSECUTIVE_FAILURES) {
+        Serial.println("BLE unrecoverable after repeated failures, rebooting...");
+        Serial.flush();
+        esp_restart();
     }
 
     // only need to queue up reading for onewire
@@ -314,8 +364,8 @@ void loop()
         float tempF = getTempF();
         thermos.add_measurement(tempF, millis());
         Serial.println(tempF);
-        if (thermos.is_under(tempF)) {
-            Serial.println("Thermostat is under");
+        if (thermos.is_over(tempF)) {
+            Serial.println("Thermostat is over");
         } else {
             Serial.println("Thermostat is in bounds");
         }
