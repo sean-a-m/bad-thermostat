@@ -155,7 +155,6 @@ void setup()
     display.writeQuickMessage("Initializing SHT45 sensor");
     Wire.begin(43, 44);
     scanForDevices();
-    //Wire.begin();
     if (!sht4.begin()) {
         Serial.println("ERROR: Couldn't find SHT45 sensor!");
         display.writeQuickMessage("ERROR: Couldn't find SHT45 sensor!");
@@ -204,7 +203,7 @@ void setup()
     thermos.set_target_temperature(target_temp_f);
     thermos.set_hysteresis(hysteresis);
 
-    Serial.println("Thermostat project initialized");
+    Serial.println("Thermostat initialized");
 }
 
 void queue_message_if_needed(float temperature) {
