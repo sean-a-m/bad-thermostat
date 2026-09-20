@@ -208,34 +208,18 @@ void setup()
 }
 
 void queue_message_if_needed(float temperature) {
-    if (heat_mode) {
-        if (message_send_queued == true) {
-            return;
-        }
-        if (machine_on && thermos.is_over(temperature)) {
-            machine_on = false;
-            message_send_queued = true;
-        }
-
-        if (!machine_on && thermos.is_under(temperature)) {
-            machine_on = true;
-            message_send_queued = true;
-        }
-    } else {
-        if (message_send_queued == true) {
-            return;
-        }
-        if (!machine_on && thermos.is_over(temperature)) {
-            machine_on = true;
-            message_send_queued = true;
-        }
-
-        if (machine_on && thermos.is_under(temperature)) {
-            machine_on = false;
-            message_send_queued = true;
-        }
+    if (message_send_queued) {
+        return;
     }
 
+
+    bool turn_on  = heat_mode ? thermos.is_under(temperature) : thermos.is_over(temperature);
+    bool turn_off = heat_mode ? thermos.is_over(temperature)  : thermos.is_under(temperature);
+
+    if ((turn_on && !machine_on) || (turn_off && machine_on)) {
+        machine_on = !machine_on;
+        message_send_queued = true;
+    }
 }
 
 boolean isTemperatureReadReady() {
