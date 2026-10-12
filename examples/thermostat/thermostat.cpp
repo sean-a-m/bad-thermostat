@@ -78,7 +78,6 @@ OneButton button1(PIN_BUTTON_1, true);
 OneButton button2(PIN_BUTTON_2, true);
 thermo_mgr thermos; 
 
-// float desired_temp_f = 70.5;
 float hysteresis = 0.75;
 float last_read_temp_f = 0.0;
 
@@ -89,7 +88,6 @@ static uint32_t last_ble_tick;
 
 static boolean message_send_queued = false;
 static boolean heat_mode = false;
-// static boolean machine_on = false;
 
 static boolean should_redraw_display = false;
     
@@ -250,8 +248,7 @@ void loop()
     // Feed the watchdog timer to prevent reset
     esp_task_wdt_reset();
 
-    // Scheduled reboot to recover from the BLE stack failing after long
-    // uptimes. State is persisted in NVS so this is non-destructive.
+    // Avoid timer issues after long uptimes
     if (millis() > REBOOT_INTERVAL_MS) {
         Serial.println("24h uptime reached, rebooting...");
         Serial.flush();
