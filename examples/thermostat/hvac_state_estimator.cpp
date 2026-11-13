@@ -25,7 +25,8 @@ void hvac_state_estimator::begin(bool heat_mode, bool believed_on, uint32_t now_
     mode_probability_[kOn] = believed_on ? kBootConfidence : 1.0 - kBootConfidence;
     mode_probability_[kOff] = 1.0 - mode_probability_[kOn];
     unsettled_p_on_ = mode_probability_[kOn];
-    settle_until_ms_ = now_ms + kSettleMs;
+    settle_ms_ = heat_mode ? kHeatSettleMs : kCoolSettleMs;
+    settle_until_ms_ = now_ms + settle_ms_;
 }
 
 void hvac_state_estimator::restore_effect(float mean, float variance) {
@@ -71,7 +72,7 @@ bool hvac_state_estimator::add_measurement(float temperature, uint32_t now_ms) {
 
 void hvac_state_estimator::note_press(bool expect_on, uint32_t now_ms) {
     press_pending_ = true;
-    settle_until_ms_ = now_ms + kSettleMs;
+    settle_until_ms_ = now_ms + settle_ms_;
     confirming_ = true;
     confirm_expect_on_ = expect_on;
     confirm_evidence_ = 0.0;

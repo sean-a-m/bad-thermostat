@@ -52,9 +52,11 @@ public:
     // decide the mode on its own.
     static constexpr double kMaxStepEvidence = 2.0;          // nats
 
-    // No mode evidence is taken for this long after boot or a press, to
-    // cover compressor restart delay and coil warm-up/cool-down.
-    static constexpr uint32_t kSettleMs = 5UL * 60UL * 1000UL;
+    // No mode evidence is taken for this long after boot or a press. Cooling
+    // has to cover compressor restart delay and coil cool-down. Heating is a
+    // fan over a steam/hot water coil, so it responds almost immediately.
+    static constexpr uint32_t kCoolSettleMs = 5UL * 60UL * 1000UL;
+    static constexpr uint32_t kHeatSettleMs = 30UL * 1000UL;
 
     // Correction policy
     static constexpr double kCorrectionProbability = 0.95;
@@ -158,6 +160,7 @@ private:
     uint32_t last_step_ms_ = 0;
 
     bool press_pending_ = false;
+    uint32_t settle_ms_ = kCoolSettleMs;
     uint32_t settle_until_ms_ = 0;
 
     bool confirming_ = false;
