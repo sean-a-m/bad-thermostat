@@ -273,8 +273,9 @@ void correct_machine_on_if_needed() {
 }
 
 void log_hvac_estimate() {
-    Serial.printf("HVAC estimate: p_on=%.3f drift=%.3f effect=%.3f+/-%.3f calibrated=%d settling=%d\n",
+    Serial.printf("HVAC estimate: p_on=%.3f p_on_nosettle=%.3f drift=%.3f effect=%.3f+/-%.3f calibrated=%d settling=%d\n",
                   hvac_estimator.p_on(),
+                  hvac_estimator.p_on_ignoring_settle(),
                   hvac_estimator.drift(),
                   hvac_estimator.effect(),
                   hvac_estimator.effect_stddev(),

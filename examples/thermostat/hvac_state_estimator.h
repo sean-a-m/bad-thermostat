@@ -107,6 +107,9 @@ public:
     bool take_effect_to_persist(uint32_t now_ms, float& mean, float& variance);
 
     float p_on() const;
+    // Diagnostic only: what p_on would be if temperature evidence were also
+    // taken during settling. Uses the real filters, so it is approximate.
+    float p_on_ignoring_settle() const;
     float drift() const;
     float effect() const;
     float effect_stddev() const;
@@ -148,6 +151,7 @@ private:
     bool initialized_ = false;
     std::array<Filter, 2> filters_{};
     std::array<double, 2> mode_probability_{{0.5, 0.5}};
+    double unsettled_p_on_ = 0.5;
 
     double reading_sum_ = 0.0;
     uint32_t reading_count_ = 0;

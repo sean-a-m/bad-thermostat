@@ -24,6 +24,7 @@ void hvac_state_estimator::begin(bool heat_mode, bool believed_on, uint32_t now_
     effect_prior_variance_ = kDefaultEffectVariance;
     mode_probability_[kOn] = believed_on ? kBootConfidence : 1.0 - kBootConfidence;
     mode_probability_[kOff] = 1.0 - mode_probability_[kOn];
+    unsettled_p_on_ = mode_probability_[kOn];
     settle_until_ms_ = now_ms + kSettleMs;
 }
 
@@ -140,6 +141,10 @@ bool hvac_state_estimator::take_effect_to_persist(uint32_t now_ms, float& mean, 
 
 float hvac_state_estimator::p_on() const {
     return static_cast<float>(mode_probability_[kOn]);
+}
+
+float hvac_state_estimator::p_on_ignoring_settle() const {
+    return static_cast<float>(unsettled_p_on_);
 }
 
 float hvac_state_estimator::drift() const {
@@ -319,11 +324,19 @@ void hvac_state_estimator::step(double measurement, double dt_min, uint32_t now_
         log_likelihood[mode] = update(filters_[mode], measurement);
     }
 
+    double evidence_on = clamp(log_likelihood[kOn] - log_likelihood[kOff],
+                               -kMaxStepEvidence, kMaxStepEvidence);
+
+    // Diagnostic only: the same recursion, but never skipping the evidence.
+    double unsettled_predicted_on = transition[kOff][kOn] * (1.0 - unsettled_p_on_) +
+                                    transition[kOn][kOn] * unsettled_p_on_;
+    double unsettled_weight_on = unsettled_predicted_on * std::exp(evidence_on);
+    unsettled_p_on_ = clamp(unsettled_weight_on / (unsettled_weight_on + 1.0 - unsettled_predicted_on),
+                            kProbabilityFloor, 1.0 - kProbabilityFloor);
+
     if (is_settling(now_ms)) {
         mode_probability_ = predicted;
     } else {
-        double evidence_on = clamp(log_likelihood[kOn] - log_likelihood[kOff],
-                                   -kMaxStepEvidence, kMaxStepEvidence);
         double weight_on = predicted[kOn] * std::exp(evidence_on);
         mode_probability_[kOn] = weight_on / (weight_on + predicted[kOff]);
 
