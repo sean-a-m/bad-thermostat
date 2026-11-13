@@ -6,6 +6,7 @@
 #include "OneButton.h"
 #include "BluetoothManager.h"
 #include "thermo_mgr.h"
+#include "hvac_state_estimator.h"
 #include <esp_sleep.h>
 #include <esp_task_wdt.h>
 #include <Preferences.h>
@@ -46,6 +47,8 @@ static const uint32_t NVS_MAGIC = 0xBAD0CAFE;
 Preferences prefs;
 boolean machine_on = false;
 float target_temp_f = 70.5;
+// Times the HVAC estimator found machine_on wrong and resynced it.
+uint32_t hvac_correction_count = 0;
 
 void nvs_save_machine_on() {
     prefs.putBool("machine_on", machine_on);
@@ -53,6 +56,15 @@ void nvs_save_machine_on() {
 
 void nvs_save_target_temp() {
     prefs.putFloat("target_temp", target_temp_f);
+}
+
+void nvs_save_correction_count() {
+    prefs.putUInt("corrections", hvac_correction_count);
+}
+
+void nvs_save_hvac_effect(float mean, float variance) {
+    prefs.putFloat("hvac_effect", mean);
+    prefs.putFloat("hvac_effect_var", variance);
 }
 
 
@@ -77,6 +89,7 @@ BluetoothManager bluetoothManager;
 OneButton button1(PIN_BUTTON_1, true);
 OneButton button2(PIN_BUTTON_2, true);
 thermo_mgr thermos; 
+hvac_state_estimator hvac_estimator;
 
 float hysteresis = 0.75;
 float last_read_temp_f = 0.0;
@@ -87,7 +100,7 @@ static uint32_t last_ble_tick;
 
 
 static boolean message_send_queued = false;
-static boolean heat_mode = false;
+static boolean heat_mode = true;
 
 static boolean should_redraw_display = false;
     
@@ -140,6 +153,18 @@ void setup()
         Serial.println(target_temp_f);
     }
     thermos.set_target_temperature(target_temp_f);
+
+    hvac_correction_count = prefs.getUInt("corrections", 0);
+    hvac_estimator.begin(heat_mode, machine_on, millis());
+    if (prefs.isKey("hvac_effect") && prefs.isKey("hvac_effect_var")) {
+        hvac_estimator.restore_effect(prefs.getFloat("hvac_effect"), prefs.getFloat("hvac_effect_var"));
+    }
+    Serial.print("HVAC estimator: corrections=");
+    Serial.print(hvac_correction_count);
+    Serial.print(" effect=");
+    Serial.print(hvac_estimator.effect(), 3);
+    Serial.print(" +/- ");
+    Serial.println(hvac_estimator.effect_stddev(), 3);
     
     // Initialize temperature sensor
 #ifdef USE_ONEWIRE_SENSOR
@@ -219,6 +244,44 @@ void queue_message_if_needed(float temperature) {
     }
 }
 
+// If the estimator is confident the unit isn't in the state we think it is
+// (a press that didn't take, or someone toggled it by hand), adopt its
+// estimate. queue_message_if_needed() then presses again if the temperature
+// still calls for it.
+void correct_machine_on_if_needed() {
+    // While a press is queued, machine_on already reflects the undelivered
+    // press, so it can't be compared against the estimate.
+    if (message_send_queued) {
+        return;
+    }
+
+    uint32_t now = millis();
+    if (!hvac_estimator.should_correct(machine_on, now)) {
+        return;
+    }
+
+    machine_on = !machine_on;
+    nvs_save_machine_on();
+    ++hvac_correction_count;
+    nvs_save_correction_count();
+    hvac_estimator.note_correction(now);
+
+    Serial.print("HVAC estimator disagrees, machine_on corrected to ");
+    Serial.print(machine_on);
+    Serial.print(", corrections=");
+    Serial.println(hvac_correction_count);
+}
+
+void log_hvac_estimate() {
+    Serial.printf("HVAC estimate: p_on=%.3f drift=%.3f effect=%.3f+/-%.3f calibrated=%d settling=%d\n",
+                  hvac_estimator.p_on(),
+                  hvac_estimator.drift(),
+                  hvac_estimator.effect(),
+                  hvac_estimator.effect_stddev(),
+                  hvac_estimator.is_calibrated(),
+                  hvac_estimator.is_settling(millis()));
+}
+
 boolean isTemperatureReadReady() {
     #ifdef USE_ONEWIRE_SENSOR
     return sensors.isConversionComplete();
@@ -277,6 +340,7 @@ void loop()
             message_send_queued = false;
             bluetoothManager.noteConnectionSuccess();
             nvs_save_machine_on();
+            hvac_estimator.note_press(machine_on, millis());
         } else if (retry_due) {
             // Backoff window elapsed and we still couldn't deliver.
             bluetoothManager.noteConnectionFailure();
@@ -309,6 +373,16 @@ void loop()
         }
         last_read_temp_f = tempF;
 
+        if (hvac_estimator.add_measurement(tempF, millis())) {
+            log_hvac_estimate();
+
+            float effect_mean, effect_variance;
+            if (hvac_estimator.take_effect_to_persist(millis(), effect_mean, effect_variance)) {
+                nvs_save_hvac_effect(effect_mean, effect_variance);
+            }
+        }
+
+        correct_machine_on_if_needed();
         queue_message_if_needed(tempF);
 
         should_redraw_display = true;
@@ -317,7 +391,10 @@ void loop()
     }
 
     if (should_redraw_display) {
-        display.drawDisplay(thermos.get_target_temperature(), last_read_temp_f);
+        float p_on = hvac_estimator.p_on();
+        display.drawDisplay(thermos.get_target_temperature(), last_read_temp_f,
+                            machine_on, machine_on ? p_on : 1.0f - p_on,
+                            hvac_correction_count);
         should_redraw_display = false;
     }
 
