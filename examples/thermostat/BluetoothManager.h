@@ -2,14 +2,18 @@
 
 #include <BLEDevice.h>
 
+// Talks to the SwitchBot only when there is a press to deliver: scan for it,
+// connect, write the press command, disconnect. Nothing is held open between
+// presses, and nothing depends on a scan at boot having succeeded.
 class BluetoothManager {
 public:
     BluetoothManager();
 
     void initialize();
-    void maintainConnection();
-    bool sendMessage();
-    bool isConnected() const { return connected_; }
+
+    // Scan, connect, send one press and disconnect. Blocks for several
+    // seconds. Returns true when the press was written to the SwitchBot.
+    bool deliverPress();
 
     // Backoff-gated retry: returns true (and stamps the attempt time) only
     // once the current backoff interval has elapsed. Caller should treat a
@@ -24,12 +28,8 @@ public:
 private:
     class ClientCallback : public BLEClientCallbacks {
     public:
-        explicit ClientCallback(BluetoothManager &manager) : manager_(manager) {}
         void onConnect(BLEClient *pclient) override;
         void onDisconnect(BLEClient *pclient) override;
-
-    private:
-        BluetoothManager &manager_;
     };
 
     class AdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
@@ -41,14 +41,11 @@ private:
         BluetoothManager &manager_;
     };
 
-    static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic,
-                               uint8_t *pData,
-                               size_t length,
-                               bool isNotify);
-
     void onDeviceFound(BLEAdvertisedDevice advertisedDevice);
-    bool connectToServer();
-    void startScan(uint32_t durationSeconds);
+    bool findDevice();
+    bool connect();
+    bool writePress();
+    void disconnect();
 
     BLEAddress targetAddress_;
     BLEUUID serviceUUID_;
@@ -56,15 +53,13 @@ private:
     BLEUUID notifyCharUUID_;
 
     BLEClient *pClient_;
-    ClientCallback *clientCallback_;
-    BLERemoteCharacteristic *pRemoteCharacteristic_;
-    BLERemoteCharacteristic *pNotifyCharacteristic_;
+    ClientCallback clientCallback_;
     BLEAdvertisedDevice *myDevice_;
     BLEScan *pBLEScan_;
 
-    bool doConnect_;
-    bool doReconnect_;
-    bool connected_;
+    // Set from the BLE task.
+    volatile bool deviceFound_;
+    volatile bool responseReceived_;
 
     uint32_t lastConnectionAttemptTick_;
     uint32_t connectionBackoffMs_;

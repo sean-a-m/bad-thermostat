@@ -94,6 +94,11 @@ public:
     // Feed every raw reading. Returns true when the filter advanced a step.
     bool add_measurement(float temperature, uint32_t now_ms);
 
+    // Call when the user states which state the unit is really in, with no
+    // press involved. Unlike note_press() this sets the mode instead of
+    // flipping it, so it is right whatever the estimate was before.
+    void set_known_state(bool on, uint32_t now_ms);
+
     // Call when a press was delivered. expect_on is the state the controller
     // believes the press produced.
     void note_press(bool expect_on, uint32_t now_ms);

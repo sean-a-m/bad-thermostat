@@ -18,7 +18,8 @@ void DisplayManager::writeQuickMessage(const char* message) {
 }
 
 void DisplayManager::drawDisplay(float target_temp_f, float last_read_temp_f,
-                                 bool hvac_on, float hvac_certainty, uint32_t hvac_corrections) {
+                                 bool hvac_on, float hvac_certainty, uint32_t hvac_corrections,
+                                 bool heat_mode) {
     char buffer[24];
 
     tft_.fillScreen(TFT_BLACK);
@@ -47,6 +48,9 @@ void DisplayManager::drawDisplay(float target_temp_f, float last_read_temp_f,
     tft_.setCursor(2, 12);
     std::snprintf(buffer, sizeof(buffer), "corr %lu", (unsigned long)hvac_corrections);
     tft_.print(buffer);
+    tft_.setTextColor(heat_mode ? TFT_ORANGE : TFT_CYAN);
+    tft_.setCursor(2, 22);
+    tft_.print(heat_mode ? "heat" : "cool");
 }
 
 size_t DisplayManager::formatFloat(float value, char* buffer, size_t bufferSize, uint8_t decimals) {

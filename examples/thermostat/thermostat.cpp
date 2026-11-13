@@ -35,9 +35,9 @@
 // very long uptimes. All persisted state lives in NVS, so a reboot is safe.
 static const uint32_t REBOOT_INTERVAL_MS = 24UL * 60UL * 60UL * 1000UL;  // 24 hours
 
-// Escape hatch for a wedged BLE stack: if the connection keeps failing this
-// many times in a row (despite backoff), reboot rather than retry forever.
-// With the backoff capping at 60s this is roughly 8-10 minutes of failures.
+// Escape hatch for a wedged BLE stack: if delivering a press keeps failing
+// this many times in a row (despite backoff), reboot rather than retry
+// forever. With the backoff capping at 60s this is roughly 10 minutes.
 static const uint32_t BLE_MAX_CONSECUTIVE_FAILURES = 12;
 
 // constexpr uint64_t    uS_TO_S_FACTOR = 1000000ULL;
@@ -62,9 +62,24 @@ void nvs_save_correction_count() {
     prefs.putUInt("corrections", hvac_correction_count);
 }
 
-void nvs_save_hvac_effect(float mean, float variance) {
-    prefs.putFloat("hvac_effect", mean);
-    prefs.putFloat("hvac_effect_var", variance);
+// The learned HVAC effect is kept per mode: heating and cooling have
+// opposite signs and different strengths.
+const char* nvs_effect_key(bool heat) {
+    return heat ? "hvac_effect" : "cool_effect";
+}
+
+const char* nvs_effect_variance_key(bool heat) {
+    return heat ? "hvac_effect_var" : "cool_effect_var";
+}
+
+void nvs_save_hvac_effect(bool heat, float mean, float variance) {
+    prefs.putFloat(nvs_effect_key(heat), mean);
+    prefs.putFloat(nvs_effect_variance_key(heat), variance);
+}
+
+void nvs_clear_hvac_effect(bool heat) {
+    prefs.remove(nvs_effect_key(heat));
+    prefs.remove(nvs_effect_variance_key(heat));
 }
 
 
@@ -96,13 +111,66 @@ float last_read_temp_f = 0.0;
 
 static uint32_t last_temperature_request_tick;
 static uint32_t last_temperature_read_tick;
-static uint32_t last_ble_tick;
 
 
 static boolean message_send_queued = false;
 static boolean heat_mode = true;
 
 static boolean should_redraw_display = false;
+
+// Set once a long press has been acted on, until both buttons are released,
+// so one gesture can't trigger a second action.
+static boolean long_press_consumed = false;
+
+// Restart the estimator for the current mode from what flash holds for it.
+void start_hvac_estimator() {
+    hvac_estimator.begin(heat_mode, machine_on, millis());
+    const char* key = nvs_effect_key(heat_mode);
+    const char* variance_key = nvs_effect_variance_key(heat_mode);
+    if (prefs.isKey(key) && prefs.isKey(variance_key)) {
+        hvac_estimator.restore_effect(prefs.getFloat(key), prefs.getFloat(variance_key));
+    }
+}
+
+// Long press, bottom button: forget what the estimator has learned for the
+// current mode, in flash and in memory, and start again from the default
+// prior.
+void reset_hvac_estimator() {
+    nvs_clear_hvac_effect(heat_mode);
+    start_hvac_estimator();
+    Serial.println("HVAC estimator reset by long press");
+    display.writeQuickMessage("estimator reset");
+}
+
+// Long press, both buttons: switch between heating and cooling. machine_on
+// is kept, since the unit's power state doesn't change with its mode.
+void toggle_heat_mode() {
+    heat_mode = !heat_mode;
+    prefs.putBool("heat_mode", heat_mode);
+    start_hvac_estimator();
+    Serial.print("Mode set by long press to ");
+    Serial.println(heat_mode ? "heat" : "cool");
+    display.writeQuickMessage(heat_mode ? "mode: HEAT" : "mode: COOL");
+}
+
+// Long press, top button: the unit is really in the other state (e.g. it was
+// unplugged). Flips machine_on without sending a press.
+void toggle_machine_on_manually() {
+    // While a press is queued, machine_on already reflects the undelivered
+    // press, so flipping it here would be ambiguous.
+    if (message_send_queued) {
+        Serial.println("Manual toggle ignored: a press is being delivered");
+        display.writeQuickMessage("busy, try again");
+        return;
+    }
+
+    machine_on = !machine_on;
+    nvs_save_machine_on();
+    hvac_estimator.set_known_state(machine_on, millis());
+    Serial.print("machine_on set by long press to ");
+    Serial.println(machine_on);
+    display.writeQuickMessage(machine_on ? "state set to ON" : "state set to OFF");
+}
     
 void scanForDevices() {
    byte error, address;
@@ -147,7 +215,10 @@ void setup()
     } else {
         machine_on = prefs.getBool("machine_on", false);
         target_temp_f = prefs.getFloat("target_temp", 70.5);
-        Serial.print("Restored from NVS: machine_on=");
+        heat_mode = prefs.getBool("heat_mode", true);
+        Serial.print("Restored from NVS: mode=");
+        Serial.print(heat_mode ? "heat" : "cool");
+        Serial.print(" machine_on=");
         Serial.print(machine_on);
         Serial.print(" target_temp=");
         Serial.println(target_temp_f);
@@ -155,10 +226,7 @@ void setup()
     thermos.set_target_temperature(target_temp_f);
 
     hvac_correction_count = prefs.getUInt("corrections", 0);
-    hvac_estimator.begin(heat_mode, machine_on, millis());
-    if (prefs.isKey("hvac_effect") && prefs.isKey("hvac_effect_var")) {
-        hvac_estimator.restore_effect(prefs.getFloat("hvac_effect"), prefs.getFloat("hvac_effect_var"));
-    }
+    start_hvac_estimator();
     Serial.print("HVAC estimator: corrections=");
     Serial.print(hvac_correction_count);
     Serial.print(" effect=");
@@ -212,6 +280,31 @@ void setup()
         should_redraw_display = true;
     });
 
+    // Bottom button lowers the target, top button raises it. Holding both
+    // switches between heating and cooling. The buttons are active low.
+    button1.attachLongPressStart([]() {
+        if (long_press_consumed) {
+            return;
+        }
+        long_press_consumed = true;
+        if (digitalRead(PIN_BUTTON_2) == LOW) {
+            toggle_heat_mode();
+        } else {
+            reset_hvac_estimator();
+        }
+    });
+    button2.attachLongPressStart([]() {
+        if (long_press_consumed) {
+            return;
+        }
+        long_press_consumed = true;
+        if (digitalRead(PIN_BUTTON_1) == LOW) {
+            toggle_heat_mode();
+        } else {
+            toggle_machine_on_manually();
+        }
+    });
+
  //   ledcAttachPin(PIN_LCD_BL, 0);
  //   ledcWrite(0, 10); /* Screen brightness can be modified by adjusting this parameter. (0-255) */
 
@@ -222,7 +315,6 @@ void setup()
     bluetoothManager.initialize();
     last_temperature_read_tick = millis();
     last_temperature_request_tick = millis();
-    last_ble_tick = millis();
     thermos.set_target_temperature(target_temp_f);
     thermos.set_hysteresis(hysteresis);
 
@@ -319,32 +411,26 @@ void loop()
         esp_restart();
     }
 
-    // Periodic keepalive, plus a backoff-gated retry when a message is
-    // waiting. Gating the retry through beginConnectionRetryIfDue() stops the
-    // old behavior where a queued message hammered maintainConnection() every
-    // single loop iteration once the link couldn't be (re)established.
-    bool keepalive_due = (millis() - last_ble_tick > 60000);
-    bool retry_due = message_send_queued && bluetoothManager.beginConnectionRetryIfDue();
-
-    if (keepalive_due || retry_due) {
-        Serial.print("\nConnection status: ");
-        Serial.println(bluetoothManager.isConnected());
-        bluetoothManager.maintainConnection();
-        last_ble_tick = millis();
-    }
-
     button1.tick();
     button2.tick();
+    if (long_press_consumed && digitalRead(PIN_BUTTON_1) == HIGH &&
+        digitalRead(PIN_BUTTON_2) == HIGH) {
+        long_press_consumed = false;
+    }
 
-    if (message_send_queued) {
-        if (bluetoothManager.isConnected() && bluetoothManager.sendMessage()) {
+    // A queued press is delivered over a connection made just for it, so
+    // nothing is held open between presses. Failed deliveries are retried
+    // with backoff. deliverPress() blocks for several seconds.
+    if (message_send_queued && bluetoothManager.beginConnectionRetryIfDue()) {
+        if (bluetoothManager.deliverPress()) {
             message_send_queued = false;
             bluetoothManager.noteConnectionSuccess();
             nvs_save_machine_on();
             hvac_estimator.note_press(machine_on, millis());
-        } else if (retry_due) {
-            // Backoff window elapsed and we still couldn't deliver.
+        } else {
             bluetoothManager.noteConnectionFailure();
+            Serial.print("Press not delivered, consecutive failures=");
+            Serial.println(bluetoothManager.consecutiveConnectionFailures());
         }
     }
 
@@ -379,7 +465,9 @@ void loop()
 
             float effect_mean, effect_variance;
             if (hvac_estimator.take_effect_to_persist(millis(), effect_mean, effect_variance)) {
-                nvs_save_hvac_effect(effect_mean, effect_variance);
+                nvs_save_hvac_effect(heat_mode, effect_mean, effect_variance);
+                Serial.printf("Saved HVAC effect for %s: %.3f (variance %.4f)\n",
+                              heat_mode ? "heat" : "cool", effect_mean, effect_variance);
             }
         }
 
@@ -395,7 +483,7 @@ void loop()
         float p_on = hvac_estimator.p_on();
         display.drawDisplay(thermos.get_target_temperature(), last_read_temp_f,
                             machine_on, machine_on ? p_on : 1.0f - p_on,
-                            hvac_correction_count);
+                            hvac_correction_count, heat_mode);
         should_redraw_display = false;
     }
 

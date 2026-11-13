@@ -11,10 +11,11 @@ public:
 
     // Full redraw of the main thermostat screen: target temp large in the
     // center, last-read temp small in the corner, and HVAC estimator status
-    // (certainty in the believed on/off state, correction count) in tiny text
-    // in the top left.
+    // (certainty in the believed on/off state, correction count, heat/cool
+    // mode) in tiny text in the top left.
     void drawDisplay(float target_temp_f, float last_read_temp_f,
-                     bool hvac_on, float hvac_certainty, uint32_t hvac_corrections);
+                     bool hvac_on, float hvac_certainty, uint32_t hvac_corrections,
+                     bool heat_mode);
 
     // Clear the screen and show a single status/error line ("booting...",
     // sensor init errors, etc.).
